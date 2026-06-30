@@ -396,6 +396,17 @@ jobs:
           # 可选值: tencent, akshare_sina, efinance, akshare_em, tushare
           # 如果有 Tushare Pro 高积分账号，可将 tushare 放在首位
           REALTIME_SOURCE_PRIORITY: ${{ vars.REALTIME_SOURCE_PRIORITY || 'tencent,akshare_sina,efinance,akshare_em' }}
+
+          # AlphaSift 股票池推荐（从独立大股票池筛入场候选，不替代 STOCK_LIST 个股分析）
+          ALPHASIFT_ENABLED: ${{ vars.ALPHASIFT_ENABLED || secrets.ALPHASIFT_ENABLED || 'false' }}
+          ALPHASIFT_DAILY_POOL_FILE: ${{ vars.ALPHASIFT_DAILY_POOL_FILE || secrets.ALPHASIFT_DAILY_POOL_FILE || 'data/pools/watch_pool.csv' }}
+          ALPHASIFT_DAILY_STRATEGY: ${{ vars.ALPHASIFT_DAILY_STRATEGY || secrets.ALPHASIFT_DAILY_STRATEGY || 'balanced_alpha' }}
+          ALPHASIFT_DAILY_STRATEGIES: ${{ vars.ALPHASIFT_DAILY_STRATEGIES || secrets.ALPHASIFT_DAILY_STRATEGIES }}
+          ALPHASIFT_DAILY_TOP_N: ${{ vars.ALPHASIFT_DAILY_TOP_N || secrets.ALPHASIFT_DAILY_TOP_N || '5' }}
+          ALPHASIFT_DAILY_NOTIFY: ${{ vars.ALPHASIFT_DAILY_NOTIFY || secrets.ALPHASIFT_DAILY_NOTIFY || 'false' }}
+          ALPHASIFT_DAILY_USE_LLM: ${{ vars.ALPHASIFT_DAILY_USE_LLM || secrets.ALPHASIFT_DAILY_USE_LLM || 'true' }}
+          ALPHASIFT_DAILY_POOL_CONTENT: ${{ vars.ALPHASIFT_DAILY_POOL_CONTENT || secrets.ALPHASIFT_DAILY_POOL_CONTENT }}
+          ALPHASIFT_DAILY_POOL_CONTENT_B64: ${{ vars.ALPHASIFT_DAILY_POOL_CONTENT_B64 || secrets.ALPHASIFT_DAILY_POOL_CONTENT_B64 }}
           
         run: |
           # 解析自选股配置：
@@ -406,6 +417,18 @@ jobs:
             export STOCK_LIST="$STOCK_LIST_CONFIG"
           elif [ -z "${STOCK_LIST:-}" ]; then
             export STOCK_LIST="600519"
+          fi
+
+          # 可选：从 GitHub Variables/Secrets 写出 AlphaSift 股票池文件。
+          # 若仓库已提交 ALPHASIFT_DAILY_POOL_FILE 指向的文件，则不需要配置这两个变量。
+          if [ -n "${ALPHASIFT_DAILY_POOL_CONTENT_B64:-}" ]; then
+            mkdir -p "$(dirname "$ALPHASIFT_DAILY_POOL_FILE")"
+            printf '%s' "$ALPHASIFT_DAILY_POOL_CONTENT_B64" | base64 -d > "$ALPHASIFT_DAILY_POOL_FILE"
+            echo "✅ AlphaSift 股票池文件已从 B64 配置写入: $ALPHASIFT_DAILY_POOL_FILE"
+          elif [ -n "${ALPHASIFT_DAILY_POOL_CONTENT:-}" ]; then
+            mkdir -p "$(dirname "$ALPHASIFT_DAILY_POOL_FILE")"
+            printf '%s\n' "$ALPHASIFT_DAILY_POOL_CONTENT" > "$ALPHASIFT_DAILY_POOL_FILE"
+            echo "✅ AlphaSift 股票池文件已从配置写入: $ALPHASIFT_DAILY_POOL_FILE"
           fi
 
           # 处理 LITELLM YAML 配置文件
@@ -452,7 +475,14 @@ jobs:
           elif [ -n "$LONGBRIDGE_OAUTH_CLIENT_ID" ] || { [ -n "$LONGBRIDGE_APP_KEY" ] && [ -z "$LONGBRIDGE_ACCESS_TOKEN" ]; }; then
             echo "  Longbridge: $([ -n "$LONGBRIDGE_OAUTH_TOKEN_CACHE_B64" ] && echo '✅ 已配置（OAuth token cache）' || echo '🟡 已配置 OAuth client，缺少 token cache')"
           else
-            echo "  Longbridge: ⚪ 未配置（仅 YFinance 等，无长桥调用）"
+          echo "  Longbridge: ⚪ 未配置（仅 YFinance 等，无长桥调用）"
+          fi
+          echo "  AlphaSift: $([ "${ALPHASIFT_ENABLED,,}" = "true" ] && echo '✅ 已启用' || echo '⚪ 未启用')"
+          if [ "${ALPHASIFT_DAILY_NOTIFY,,}" = "true" ]; then
+            echo "  AlphaSift Daily Pool: ✅ $ALPHASIFT_DAILY_POOL_FILE"
+            echo "  AlphaSift Daily Strategies: ${ALPHASIFT_DAILY_STRATEGIES:-$ALPHASIFT_DAILY_STRATEGY}"
+          else
+            echo "  AlphaSift Daily Pool: ⚪ 未启用"
           fi
           echo ""
           echo "【搜索引擎】"

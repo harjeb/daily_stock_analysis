@@ -210,6 +210,18 @@ def parse_env_bool(value: Optional[str], default: bool = False) -> bool:
     return normalized not in _FALSEY_ENV_VALUES
 
 
+def parse_env_csv(value: Optional[str], default: Optional[List[str]] = None) -> List[str]:
+    """Parse comma/semicolon/newline separated env values into a de-duplicated list."""
+    if value is None:
+        return list(default or [])
+    items = [
+        item.strip()
+        for item in re.split(r"[,;\n\r]+", value)
+        if item and item.strip()
+    ]
+    return list(dict.fromkeys(items)) if items else list(default or [])
+
+
 def parse_env_int(
     value: Optional[str],
     default: int,
@@ -731,6 +743,12 @@ class Config:
     # === AlphaSift optional stock screening integration ===
     alphasift_enabled: bool = False
     alphasift_install_spec: str = DEFAULT_ALPHASIFT_INSTALL_SPEC
+    alphasift_daily_pool_file: str = "data/pools/watch_pool.csv"
+    alphasift_daily_strategy: str = "balanced_alpha"
+    alphasift_daily_strategies: List[str] = field(default_factory=lambda: ["balanced_alpha"])
+    alphasift_daily_top_n: int = 5
+    alphasift_daily_notify: bool = False
+    alphasift_daily_use_llm: bool = True
 
     # === AI 分析配置 ===
     generation_backend: str = LITELLM_BACKEND_ID
@@ -2041,6 +2059,27 @@ class Config:
                 if os.getenv('ALPHASIFT_INSTALL_SPEC') is None
                 else os.getenv('ALPHASIFT_INSTALL_SPEC', '').strip()
             ),
+            alphasift_daily_pool_file=os.getenv(
+                'ALPHASIFT_DAILY_POOL_FILE',
+                'data/pools/watch_pool.csv',
+            ).strip(),
+            alphasift_daily_strategy=os.getenv('ALPHASIFT_DAILY_STRATEGY', 'balanced_alpha').strip() or 'balanced_alpha',
+            alphasift_daily_strategies=parse_env_csv(
+                os.getenv('ALPHASIFT_DAILY_STRATEGIES'),
+                default=[
+                    os.getenv('ALPHASIFT_DAILY_STRATEGY', 'balanced_alpha').strip()
+                    or 'balanced_alpha'
+                ],
+            ),
+            alphasift_daily_top_n=parse_env_int(
+                os.getenv('ALPHASIFT_DAILY_TOP_N'),
+                5,
+                field_name='ALPHASIFT_DAILY_TOP_N',
+                minimum=1,
+                maximum=50,
+            ),
+            alphasift_daily_notify=parse_env_bool(os.getenv('ALPHASIFT_DAILY_NOTIFY'), default=False),
+            alphasift_daily_use_llm=parse_env_bool(os.getenv('ALPHASIFT_DAILY_USE_LLM'), default=True),
         )
     
     @classmethod

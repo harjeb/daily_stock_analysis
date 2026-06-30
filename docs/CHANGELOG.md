@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 <!-- 每条独立一行追加到本段末尾，无需分类标题，合并时冲突最小 -->
 
 - [修复] 修复 Web 首页个股栏在 stock-bar 摘要字段缺失或动作建议无法归类时隐藏情绪分与建议标识的问题。
+- [新功能] 新增 AlphaSift 每日股票池推荐配置，支持从独立股票池文件按多策略筛 Top N、去重合并并追加到每日推送/文档。
 
 ## [3.24.1] - 2026-06-28
 

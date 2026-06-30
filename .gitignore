@@ -87,3 +87,6 @@ static/
 /apps/dsa-desktop/dist/
 /apps/dsa-desktop/node_modules/
 docs/specs/
+
+# Dolt database files (added by bd init)
+.dolt/

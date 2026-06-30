@@ -134,6 +134,47 @@ AlphaSift 侧已在 `ZhuLinsen/alphasift@0a7b9cd59e81718f851890535241bc105d4ddc6
 - `/api/v1/alphasift/screen/tasks`：Web/桌面选股页使用的后台任务入口，提交后立即返回 `task_id`，实际选股在共享任务队列中继续执行，避免浏览器长请求被外部快照、行情、新闻或 LLM 延迟拖到超时。
 - `/api/v1/alphasift/screen/tasks/{task_id}`：查询后台选股任务状态。进行中返回 `pending/processing + progress/message`，完成后在 `result` 中返回与 `/screen` 相同的候选结构，失败时返回 `failed + error`；仅接受 `report_type=alphasift_screen` 的任务 ID，普通分析任务不会被误读为选股结果。
 
+## 每日股票池推荐
+
+DSA 可以在每日分析流程中追加一个独立的 AlphaSift 股票池推荐区块。该流程面向用户维护的大股票池，不复用 `STOCK_LIST`，也不会触发 DSA 对股票池逐只做深度分析；DSA 只负责读取配置、运行 AlphaSift、格式化结果并通过原有通知/文档通道发送。
+
+配置项：
+
+```env
+ALPHASIFT_ENABLED=true
+ALPHASIFT_DAILY_POOL_FILE=data/pools/watch_pool.csv
+ALPHASIFT_DAILY_STRATEGY=balanced_alpha
+ALPHASIFT_DAILY_STRATEGIES=shrink_pullback,balanced_alpha,volume_breakout
+ALPHASIFT_DAILY_TOP_N=5
+ALPHASIFT_DAILY_NOTIFY=true
+ALPHASIFT_DAILY_USE_LLM=true
+# GitHub Actions 可选：不提交 pool 文件时，从 Variable/Secret 写出文件
+ALPHASIFT_DAILY_POOL_CONTENT=600519,300750,002594
+ALPHASIFT_DAILY_POOL_CONTENT_B64=
+```
+
+- `ALPHASIFT_DAILY_POOL_FILE`：股票池文件路径，支持一行一个代码、逗号/空白分隔或普通 CSV；只提取 6 位 A 股代码，兼容 `SH600519`、`600519.SH`、`SZ300750` 等写法。
+- `ALPHASIFT_DAILY_STRATEGIES`：多策略列表，逗号分隔；未配置时回退到单策略 `ALPHASIFT_DAILY_STRATEGY`。
+- `ALPHASIFT_DAILY_TOP_N`：每个策略先取前 N 个候选。
+- `ALPHASIFT_DAILY_NOTIFY`：开启后，定时/CLI 每日分析会追加“AlphaSift 股票池入场候选”区块；合并推送模式下并入合并报告，非合并模式下单独推送该区块。
+- `ALPHASIFT_DAILY_USE_LLM`：是否允许 AlphaSift 使用 LLM 横向重排；关闭后仅使用本地因子排序。
+- `ALPHASIFT_DAILY_POOL_CONTENT` / `ALPHASIFT_DAILY_POOL_CONTENT_B64`：GitHub Actions 专用辅助变量。若仓库中没有提交 `ALPHASIFT_DAILY_POOL_FILE` 指向的文件，workflow 会优先用 B64 内容写出文件，否则用普通文本内容写出文件。
+
+推荐近期入场组合：
+
+```env
+ALPHASIFT_DAILY_STRATEGIES=shrink_pullback,balanced_alpha,volume_breakout
+ALPHASIFT_DAILY_TOP_N=5
+```
+
+运行语义：
+
+- 每个策略在同一个股票池内筛选 Top N。
+- DSA 按股票代码去重合并，若同一股票被多个策略选中，会保留策略命中列表，并优先使用分数更高的一次候选详情。
+- 结果排序优先考虑命中策略数量，其次考虑候选分数。
+- 该流程会临时限制 AlphaSift 全市场快照为股票池代码集合；不会改写 `.env`、不会修改 AlphaSift 策略文件。
+- 若股票池文件缺失、AlphaSift 不可用或某个策略失败，主每日分析流程继续执行，并在日志或推荐区块中保留降级提示。
+
 ## 配置兼容边界（LLM / LiteLLM / Base URL）
 
 - 兼容语义与版本证据（可追溯）：

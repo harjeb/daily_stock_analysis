@@ -729,6 +729,7 @@ def run_full_analysis(
         market_context_summary = ""
         market_context_full_report = ""
         market_context_generated_during_stock = False
+        alphasift_daily_pool_report = ""
         pipeline = StockAnalysisPipeline(
             config=config,
             max_workers=args.workers,
@@ -772,6 +773,52 @@ def run_full_analysis(
             merge_notification=merge_notification,
             current_time=analysis_reference_time,
         )
+
+        if (
+            not args.dry_run
+            and getattr(config, "alphasift_daily_notify", False)
+        ):
+            try:
+                from src.services.alphasift_daily_pool_service import (
+                    AlphaSiftDailyPoolService,
+                    format_daily_pool_markdown,
+                )
+
+                daily_pool_result = AlphaSiftDailyPoolService(config).run()
+                alphasift_daily_pool_report = format_daily_pool_markdown(daily_pool_result)
+                if alphasift_daily_pool_report:
+                    logger.info(
+                        "AlphaSift 股票池推荐完成: pool_count=%s candidate_count=%s strategies=%s",
+                        daily_pool_result.pool_count,
+                        daily_pool_result.candidate_count,
+                        ",".join(daily_pool_result.strategies),
+                    )
+                    try:
+                        pool_report_name = (
+                            f"alphasift_daily_pool_{datetime.now(timezone(timedelta(hours=8))).strftime('%Y%m%d')}.md"
+                        )
+                        pool_report_path = pipeline.notifier.save_report_to_file(
+                            alphasift_daily_pool_report,
+                            filename=pool_report_name,
+                        )
+                        logger.info("AlphaSift 股票池推荐已保存: %s", pool_report_path)
+                    except Exception as save_exc:
+                        logger.warning("AlphaSift 股票池推荐保存失败（已忽略）: %s", save_exc)
+                    if (
+                        not merge_notification
+                        and not args.no_notify
+                        and pipeline.notifier.is_available()
+                    ):
+                        if pipeline.notifier.send(
+                            alphasift_daily_pool_report,
+                            email_send_to_all=True,
+                            route_type="report",
+                        ):
+                            logger.info("AlphaSift 股票池推荐推送成功")
+                        else:
+                            logger.warning("AlphaSift 股票池推荐推送失败")
+            except Exception as exc:
+                logger.warning("AlphaSift 股票池推荐失败（已忽略）: %s", exc)
 
         if should_use_daily_market_context and not market_context_summary:
             (
@@ -887,10 +934,12 @@ def run_full_analysis(
                 market_report = market_context_full_report or market_context_summary
 
         # Issue #190: 合并推送（个股+大盘复盘）
-        if merge_notification and (results or market_report) and not args.no_notify:
+        if merge_notification and (results or market_report or alphasift_daily_pool_report) and not args.no_notify:
             parts = []
             if market_report:
                 parts.append(f"# 📈 大盘复盘\n\n{market_report}")
+            if alphasift_daily_pool_report:
+                parts.append(alphasift_daily_pool_report)
             if results:
                 dashboard_content = pipeline.notifier.generate_aggregate_report(
                     results,
@@ -922,7 +971,7 @@ def run_full_analysis(
             from src.feishu_doc import FeishuDocManager
 
             feishu_doc = FeishuDocManager()
-            if feishu_doc.is_configured() and (results or market_report):
+            if feishu_doc.is_configured() and (results or market_report or alphasift_daily_pool_report):
                 logger.info("正在创建飞书云文档...")
 
                 # 1. 准备标题 "01-01 13:01大盘复盘"
@@ -936,6 +985,9 @@ def run_full_analysis(
                 # 添加大盘复盘内容（如果有）
                 if market_report:
                     full_content += f"# 📈 大盘复盘\n\n{market_report}\n\n---\n\n"
+
+                if alphasift_daily_pool_report:
+                    full_content += f"{alphasift_daily_pool_report}\n\n---\n\n"
 
                 # 添加个股决策仪表盘（使用 NotificationService 生成，按 report_type 分支）
                 if results:
