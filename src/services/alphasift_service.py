@@ -1999,7 +1999,7 @@ class DsaEastMoneyHotspotProvider:
         "fltt": "2",
         "invt": "2",
         "fid": "f12",
-        "fields": "f2,f3,f4,f12,f13,f14,f104,f105,f128,f136,f140,f141,f207",
+        "fields": "f2,f3,f4,f12,f13,f14,f24,f104,f105,f128,f136,f140,f141,f207",
     }
     _BROAD_BOARD_KEYWORDS = (
         "融资融券",
@@ -2203,6 +2203,37 @@ class DsaEastMoneyHotspotProvider:
             })
         return rows
 
+    def board_performance_rows(self, *, top: int = 50) -> List[Dict[str, Any]]:
+        import pandas as pd
+
+        rows: List[Dict[str, Any]] = []
+        for source, source_fs in (
+            ("concept", "m:90 t:3 f:!50"),
+            ("industry", "m:90 t:2 f:!50"),
+        ):
+            try:
+                frame = self._fetch_board_names(source_fs=source_fs)
+            except Exception as exc:
+                logger.warning("AlphaSift board performance fetch failed source=%s: %s", source, exc)
+                continue
+            df = pd.DataFrame(frame)
+            if df.empty:
+                continue
+            for index, row in df.head(max(1, min(top, 200))).iterrows():
+                name = _env_text(row.get("name") or row.get("板块名称") or row.get("行业名称") or row.get("名称"))
+                if not name or self._is_broad_board(name):
+                    continue
+                change_60d = _safe_float(row.get("change_60d") or row.get("60日涨跌幅"))
+                rows.append({
+                    "name": name,
+                    "source": source,
+                    "rank": index + 1,
+                    "change_pct": _safe_float(row.get("change_pct") or row.get("涨跌幅")),
+                    "change_60d": change_60d,
+                })
+        rows.sort(key=lambda item: float(item.get("change_60d") or 0.0), reverse=True)
+        return rows
+
     def stock_board_concept_cons_em(self, symbol: str = "") -> Any:
         cached = self._get_constituent_cache("concept", symbol)
         if cached is not None:
@@ -2387,9 +2418,11 @@ class DsaEastMoneyHotspotProvider:
             {
                 "板块名称": str(row.get("f14") or "").strip(),
                 "涨跌幅": row.get("f3"),
+                "60日涨跌幅": row.get("f24"),
                 "序号": index + 1,
                 "name": str(row.get("f14") or "").strip(),
                 "change_pct": row.get("f3"),
+                "change_60d": row.get("f24"),
                 "rank": index + 1,
                 "leader": str(row.get("f140") or row.get("f128") or "").strip(),
                 "up_count": row.get("f104"),

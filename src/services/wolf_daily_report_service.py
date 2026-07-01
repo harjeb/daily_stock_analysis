@@ -26,6 +26,7 @@ class WolfDailyPick:
     scope: str
     name: str = ""
     source: str = ""
+    hot_sectors: List[str] = field(default_factory=list)
     policy: Dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -46,9 +47,20 @@ class WolfDailyReportResult:
     enabled: bool
     whitelist_count: int = 0
     stock_list_count: int = 0
+    hot_sector_count: int = 0
+    hot_sector_candidate_count: int = 0
+    hot_sector_names: List[str] = field(default_factory=list)
     picks: List[WolfDailyPick] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
     source_errors: List[str] = field(default_factory=list)
+
+
+@dataclass
+class WolfHotSectorSelection:
+    board_names: List[str] = field(default_factory=list)
+    code_to_boards: Dict[str, List[str]] = field(default_factory=dict)
+    source_errors: List[str] = field(default_factory=list)
+    lookback_days: int = 60
 
 
 class WolfDailyReportService:
@@ -73,6 +85,11 @@ class WolfDailyReportService:
 
         result = WolfDailyReportResult(enabled=True)
         max_codes = max(1, int(getattr(self.config, "wolf_daily_max_codes", 30) or 30))
+        hot_sector_selection = self._build_hot_sector_selection()
+        if hot_sector_selection:
+            result.hot_sector_count = len(hot_sector_selection.board_names)
+            result.hot_sector_names = list(hot_sector_selection.board_names)
+            result.source_errors.extend(hot_sector_selection.source_errors)
 
         if bool(getattr(self.config, "wolf_daily_whitelist_enabled", False)):
             whitelist_codes, whitelist_warnings = load_wolf_codes(
@@ -82,8 +99,22 @@ class WolfDailyReportService:
             )
             result.warnings.extend(whitelist_warnings)
             result.whitelist_count = len(whitelist_codes)
-            for code in whitelist_codes[:max_codes]:
-                pick = self._evaluate_code(code, scope="whitelist")
+            selected_codes, selection_warnings = select_wolf_scope_codes(
+                whitelist_codes,
+                scope="whitelist",
+                max_codes=max_codes,
+                hot_sector_selection=hot_sector_selection,
+            )
+            result.warnings.extend(selection_warnings)
+            result.hot_sector_candidate_count += sum(
+                1 for code in selected_codes if hot_sector_selection and code in hot_sector_selection.code_to_boards
+            )
+            for code in selected_codes:
+                pick = self._evaluate_code(
+                    code,
+                    scope="whitelist",
+                    hot_sectors=(hot_sector_selection.code_to_boards.get(code, []) if hot_sector_selection else []),
+                )
                 if pick:
                     result.picks.append(pick)
 
@@ -91,8 +122,22 @@ class WolfDailyReportService:
             normalized_stock_codes, skipped = normalize_wolf_code_list(stock_codes or getattr(self.config, "stock_list", []))
             result.stock_list_count = len(normalized_stock_codes)
             result.warnings.extend(f"STOCK_LIST skipped unsupported code: {code}" for code in skipped[:8])
-            for code in normalized_stock_codes[:max_codes]:
-                pick = self._evaluate_code(code, scope="stock_list")
+            selected_codes, selection_warnings = select_wolf_scope_codes(
+                normalized_stock_codes,
+                scope="stock_list",
+                max_codes=max_codes,
+                hot_sector_selection=hot_sector_selection,
+            )
+            result.warnings.extend(selection_warnings)
+            result.hot_sector_candidate_count += sum(
+                1 for code in selected_codes if hot_sector_selection and code in hot_sector_selection.code_to_boards
+            )
+            for code in selected_codes:
+                pick = self._evaluate_code(
+                    code,
+                    scope="stock_list",
+                    hot_sectors=(hot_sector_selection.code_to_boards.get(code, []) if hot_sector_selection else []),
+                )
                 if pick:
                     result.picks.append(pick)
 
@@ -100,8 +145,9 @@ class WolfDailyReportService:
             result.warnings.append("Wolf daily report has no enabled scopes or valid A-share codes")
         return result
 
-    def _evaluate_code(self, code: str, *, scope: str) -> Optional[WolfDailyPick]:
+    def _evaluate_code(self, code: str, *, scope: str, hot_sectors: Optional[List[str]] = None) -> Optional[WolfDailyPick]:
         days = max(30, int(getattr(self.config, "wolf_daily_history_days", 120) or 120))
+        hot_sectors = list(hot_sectors or [])
         try:
             df, source = load_history_df(code, days=days)
         except Exception as exc:
@@ -110,6 +156,7 @@ class WolfDailyReportService:
                 code=code,
                 scope=scope,
                 name=self._stock_name(code),
+                hot_sectors=hot_sectors,
                 policy={
                     "wolf_action": "watch",
                     "position_cap": "0%",
@@ -124,6 +171,7 @@ class WolfDailyReportService:
                 scope=scope,
                 name=self._stock_name(code),
                 source=source,
+                hot_sectors=hot_sectors,
                 policy={
                     "wolf_action": "watch",
                     "position_cap": "0%",
@@ -140,12 +188,67 @@ class WolfDailyReportService:
         }
         context["market_phase_context"] = {"phase": "postmarket"}
         policy = evaluate_wolf_postmarket_policy(context)
+        if hot_sectors:
+            policy["hot_sector_matches"] = hot_sectors
+            reasons = [str(item) for item in policy.get("reasons") or [] if str(item).strip()]
+            policy["reasons"] = [
+                f"命中近60日强势板块：{'、'.join(hot_sectors[:3])}",
+                *reasons,
+            ]
         return WolfDailyPick(
             code=code,
             scope=scope,
             name=self._stock_name(code),
             source=source,
+            hot_sectors=hot_sectors,
             policy=policy,
+        )
+
+    def _build_hot_sector_selection(self) -> Optional[WolfHotSectorSelection]:
+        if not bool(getattr(self.config, "wolf_daily_hot_sector_filter_enabled", True)):
+            return None
+
+        top_n = max(0, int(getattr(self.config, "wolf_daily_hot_sector_top_n", 12) or 0))
+        min_change_pct = float(getattr(self.config, "wolf_daily_hot_sector_min_change_pct", 0.0) or 0.0)
+        try:
+            from src.services.alphasift_service import DsaEastMoneyHotspotProvider
+
+            provider = DsaEastMoneyHotspotProvider()
+            rows = provider.board_performance_rows(top=max(top_n, 50))
+        except Exception as exc:
+            logger.warning("Wolf hot sector selection failed to load board performance: %s", exc)
+            return WolfHotSectorSelection(source_errors=[f"wolf_hot_sector_performance_failed: {exc}"])
+
+        ranked_boards = _rank_hot_sector_rows(rows, top_n=top_n, min_change_pct=min_change_pct)
+        if not ranked_boards:
+            return WolfHotSectorSelection(source_errors=["wolf_hot_sector_performance_empty"])
+
+        code_to_boards: Dict[str, List[str]] = {}
+        source_errors: List[str] = []
+        for board in ranked_boards:
+            name = str(board.get("name") or "").strip()
+            source = str(board.get("source") or "concept").strip()
+            if not name:
+                continue
+            try:
+                frame = (
+                    provider.stock_board_industry_cons_em(name)
+                    if source == "industry"
+                    else provider.stock_board_concept_cons_em(name)
+                )
+                for code in _extract_constituent_codes(frame):
+                    code_to_boards.setdefault(code, [])
+                    if name not in code_to_boards[code]:
+                        code_to_boards[code].append(name)
+            except Exception as exc:
+                logger.warning("Wolf hot sector constituent fetch failed for %s: %s", name, exc)
+                source_errors.append(f"wolf_hot_sector_constituents_failed:{name}:{exc}")
+
+        return WolfHotSectorSelection(
+            board_names=[str(board.get("name") or "").strip() for board in ranked_boards if str(board.get("name") or "").strip()],
+            code_to_boards=code_to_boards,
+            source_errors=source_errors,
+            lookback_days=60,
         )
 
     def _build_policy_context(self, df: pd.DataFrame) -> Dict[str, Any]:
@@ -230,6 +333,13 @@ def format_wolf_daily_report_markdown(result: WolfDailyReportResult) -> str:
         "> 数据边界：本报告只使用日 K、均线、BOLL、量价和已有大盘摘要；不使用 15 分钟 K，不生成盘中即时买卖指令。",
         "",
     ]
+    if result.hot_sector_names:
+        sector_text = "、".join(result.hot_sector_names[:8])
+        suffix = "…" if len(result.hot_sector_names) > 8 else ""
+        lines.extend([
+            f"> 近60日强势板块 {result.hot_sector_count} 个：{sector_text}{suffix}",
+            "",
+        ])
 
     if whitelist:
         lines.extend(["## 白名单观察 / 入场候选", ""])
@@ -313,6 +423,59 @@ def normalize_wolf_code(value: Any) -> str:
     return match.group(0) if match else ""
 
 
+def select_wolf_scope_codes(
+    codes: List[str],
+    *,
+    scope: str,
+    max_codes: int,
+    hot_sector_selection: Optional[WolfHotSectorSelection],
+) -> tuple[List[str], List[str]]:
+    warnings: List[str] = []
+    normalized_max = max(1, int(max_codes or 1))
+    unique_codes = list(dict.fromkeys(codes))
+    if not unique_codes:
+        return [], warnings
+
+    if not hot_sector_selection or not hot_sector_selection.code_to_boards:
+        selected = unique_codes[:normalized_max]
+        if len(unique_codes) > len(selected):
+            warnings.append(
+                f"Wolf {scope} hot-sector data unavailable; capped {len(unique_codes)} codes to {len(selected)}"
+            )
+        return selected, warnings
+
+    hot_codes = [code for code in unique_codes if code in hot_sector_selection.code_to_boards]
+    if scope == "whitelist":
+        if hot_codes:
+            warnings.append(
+                f"Wolf whitelist hot-sector filter selected {len(hot_codes)} of {len(unique_codes)} codes"
+            )
+            return hot_codes, warnings
+        selected = unique_codes[:normalized_max]
+        warnings.append(
+            f"Wolf whitelist had no near-60d hot-sector matches; fallback capped {len(unique_codes)} codes to {len(selected)}"
+        )
+        return selected, warnings
+
+    if len(unique_codes) <= normalized_max:
+        return unique_codes, warnings
+
+    if hot_codes:
+        selected = list(hot_codes)
+        for code in unique_codes:
+            if code in hot_sector_selection.code_to_boards or len(selected) >= normalized_max:
+                continue
+            selected.append(code)
+        warnings.append(
+            f"Wolf {scope} kept {len(hot_codes)} hot-sector matches and capped total {len(unique_codes)} codes to {len(selected)}"
+        )
+        return selected, warnings
+
+    selected = unique_codes[:normalized_max]
+    warnings.append(f"Wolf {scope} had no hot-sector matches; capped {len(unique_codes)} codes to {len(selected)}")
+    return selected, warnings
+
+
 def _pool_tokens(content: str) -> List[str]:
     tokens: List[str] = []
     try:
@@ -326,6 +489,66 @@ def _pool_tokens(content: str) -> List[str]:
     for token in tokens:
         expanded.extend(re.split(r"[\s,;，；|]+", str(token)))
     return expanded
+
+
+def _rank_hot_sector_rows(
+    rows: Iterable[Mapping[str, Any]],
+    *,
+    top_n: int,
+    min_change_pct: float,
+) -> List[Dict[str, Any]]:
+    ranked: List[Dict[str, Any]] = []
+    seen = set()
+    for row in rows or []:
+        if not isinstance(row, Mapping):
+            continue
+        name = str(row.get("name") or row.get("板块名称") or row.get("行业名称") or "").strip()
+        if not name or name in seen:
+            continue
+        change_60d = _safe_float(row.get("change_60d") or row.get("60日涨跌幅"))
+        if change_60d is None or change_60d < min_change_pct:
+            continue
+        seen.add(name)
+        ranked.append({
+            "name": name,
+            "source": str(row.get("source") or "concept").strip() or "concept",
+            "change_60d": change_60d,
+        })
+    ranked.sort(key=lambda item: float(item.get("change_60d") or 0.0), reverse=True)
+    return ranked[:top_n] if top_n > 0 else ranked
+
+
+def _extract_constituent_codes(frame: Any) -> List[str]:
+    df = pd.DataFrame(frame)
+    if df.empty:
+        return []
+    candidate_columns = (
+        "code",
+        "代码",
+        "股票代码",
+        "证券代码",
+        "成分股代码",
+        "f12",
+    )
+    codes: List[str] = []
+    for column in candidate_columns:
+        if column not in df.columns:
+            continue
+        for value in df[column].tolist():
+            code = normalize_wolf_code(value)
+            if code:
+                codes.append(code)
+        if codes:
+            break
+    if codes:
+        return list(dict.fromkeys(codes))
+    for row in df.to_dict(orient="records"):
+        for value in row.values():
+            code = normalize_wolf_code(value)
+            if code:
+                codes.append(code)
+                break
+    return list(dict.fromkeys(codes))
 
 
 def _previous_red_low(frame: pd.DataFrame) -> Optional[float]:
@@ -381,6 +604,8 @@ def _format_pick(index: int, pick: WolfDailyPick, *, holding_mode: bool) -> List
     reasons = [str(item) for item in policy.get("reasons") or [] if str(item).strip()]
     if reasons:
         lines.append(f"   - 依据：{_compact_text('；'.join(reasons[:3]), 160)}")
+    if pick.hot_sectors:
+        lines.append(f"   - 板块：{'、'.join(pick.hot_sectors[:4])}")
     entry_conditions = [str(item) for item in policy.get("entry_conditions") or [] if str(item).strip()]
     if entry_conditions:
         lines.append(f"   - 触发：{_compact_text('；'.join(entry_conditions[:2]), 140)}")

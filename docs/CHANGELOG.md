@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [新功能] 新增 AlphaSift 每日股票池推荐配置，支持从独立股票池文件按多策略筛 Top N、去重合并并追加到每日推送/文档。
 - [新功能] 新增狼大盘后决策策略、确定性入场护栏和日 K 每日报告开关，可分别分析白名单候选与 `STOCK_LIST` 操作计划。
 - [改进] GitHub Actions 每日分析支持透传 Wolf 日 K 盘后分析配置与白名单内容。
+- [改进] Wolf 日 K 报告按近 60 日板块涨幅筛选白名单候选，强势板块命中项不再受默认 30 只兜底上限截断。
 
 ## [3.24.1] - 2026-06-28
 

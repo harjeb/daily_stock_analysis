@@ -11,6 +11,9 @@ WOLF_DAILY_WHITELIST_ENABLED=true
 WOLF_DAILY_WHITELIST_FILE=data/pools/wolf_whitelist.csv
 WOLF_DAILY_MAX_CODES=30
 WOLF_DAILY_HISTORY_DAYS=120
+WOLF_DAILY_HOT_SECTOR_FILTER_ENABLED=true
+WOLF_DAILY_HOT_SECTOR_TOP_N=12
+WOLF_DAILY_HOT_SECTOR_MIN_CHANGE_PCT=0
 ```
 
 可选的 GitHub Actions / 容器注入方式：
@@ -21,6 +24,10 @@ WOLF_DAILY_WHITELIST_CONTENT_B64=
 ```
 
 GitHub Actions 每日分析 workflow 会读取同名 Repository Variables 或 Secrets。普通开关和数量上限建议放在 Variables；只有不想提交到仓库的白名单内容才需要放到 `WOLF_DAILY_WHITELIST_CONTENT` 或 `WOLF_DAILY_WHITELIST_CONTENT_B64`。
+
+`WOLF_DAILY_MAX_CODES` 不是强势板块命中数量上限。默认会先按近 60 日板块涨幅选强势板块，再把白名单里命中这些板块的股票全部分析；如果 150 只白名单里有 60 只属于强势板块，本轮会分析这 60 只。只有拿不到板块数据、关闭强势板块筛选，或 `STOCK_LIST` 过大且缺少强势板块命中时，才使用 `WOLF_DAILY_MAX_CODES` 做兜底截断。
+
+强势板块默认取近 60 日涨幅前 12 个，且涨幅不低于 0%。可以用 `WOLF_DAILY_HOT_SECTOR_TOP_N=0` 表示不限制板块个数，只按 `WOLF_DAILY_HOT_SECTOR_MIN_CHANGE_PCT` 过滤。
 
 ## 报告范围
 

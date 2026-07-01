@@ -415,6 +415,9 @@ jobs:
           WOLF_DAILY_WHITELIST_FILE: ${{ vars.WOLF_DAILY_WHITELIST_FILE || secrets.WOLF_DAILY_WHITELIST_FILE || 'data/pools/wolf_whitelist.csv' }}
           WOLF_DAILY_MAX_CODES: ${{ vars.WOLF_DAILY_MAX_CODES || secrets.WOLF_DAILY_MAX_CODES || '30' }}
           WOLF_DAILY_HISTORY_DAYS: ${{ vars.WOLF_DAILY_HISTORY_DAYS || secrets.WOLF_DAILY_HISTORY_DAYS || '120' }}
+          WOLF_DAILY_HOT_SECTOR_FILTER_ENABLED: ${{ vars.WOLF_DAILY_HOT_SECTOR_FILTER_ENABLED || secrets.WOLF_DAILY_HOT_SECTOR_FILTER_ENABLED || 'true' }}
+          WOLF_DAILY_HOT_SECTOR_TOP_N: ${{ vars.WOLF_DAILY_HOT_SECTOR_TOP_N || secrets.WOLF_DAILY_HOT_SECTOR_TOP_N || '12' }}
+          WOLF_DAILY_HOT_SECTOR_MIN_CHANGE_PCT: ${{ vars.WOLF_DAILY_HOT_SECTOR_MIN_CHANGE_PCT || secrets.WOLF_DAILY_HOT_SECTOR_MIN_CHANGE_PCT || '0' }}
           WOLF_DAILY_WHITELIST_CONTENT: ${{ vars.WOLF_DAILY_WHITELIST_CONTENT || secrets.WOLF_DAILY_WHITELIST_CONTENT }}
           WOLF_DAILY_WHITELIST_CONTENT_B64: ${{ vars.WOLF_DAILY_WHITELIST_CONTENT_B64 || secrets.WOLF_DAILY_WHITELIST_CONTENT_B64 }}
           
@@ -510,6 +513,7 @@ jobs:
           if [ "${WOLF_DAILY_REPORT_ENABLED,,}" = "true" ]; then
             echo "  Wolf STOCK_LIST: $([ "${WOLF_DAILY_STOCK_LIST_ENABLED,,}" = "true" ] && echo '✅ 分析' || echo '⚪ 跳过')"
             echo "  Wolf 白名单: $([ "${WOLF_DAILY_WHITELIST_ENABLED,,}" = "true" ] && echo "✅ $WOLF_DAILY_WHITELIST_FILE" || echo '⚪ 未启用')"
+            echo "  Wolf 近60日强势板块筛选: $([ "${WOLF_DAILY_HOT_SECTOR_FILTER_ENABLED,,}" = "true" ] && echo "✅ Top ${WOLF_DAILY_HOT_SECTOR_TOP_N}, min ${WOLF_DAILY_HOT_SECTOR_MIN_CHANGE_PCT}%" || echo '⚪ 未启用')"
           fi
           echo ""
           echo "【搜索引擎】"

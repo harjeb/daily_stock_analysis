@@ -759,6 +759,9 @@ class Config:
     wolf_daily_whitelist_content_b64: str = ""
     wolf_daily_max_codes: int = 30
     wolf_daily_history_days: int = 120
+    wolf_daily_hot_sector_filter_enabled: bool = True
+    wolf_daily_hot_sector_top_n: int = 12
+    wolf_daily_hot_sector_min_change_pct: float = 0.0
 
     # === AI 分析配置 ===
     generation_backend: str = LITELLM_BACKEND_ID
@@ -1679,6 +1682,24 @@ class Config:
                 field_name='WOLF_DAILY_HISTORY_DAYS',
                 minimum=30,
                 maximum=500,
+            ),
+            wolf_daily_hot_sector_filter_enabled=parse_env_bool(
+                os.getenv('WOLF_DAILY_HOT_SECTOR_FILTER_ENABLED'),
+                default=True,
+            ),
+            wolf_daily_hot_sector_top_n=parse_env_int(
+                os.getenv('WOLF_DAILY_HOT_SECTOR_TOP_N'),
+                12,
+                field_name='WOLF_DAILY_HOT_SECTOR_TOP_N',
+                minimum=0,
+                maximum=50,
+            ),
+            wolf_daily_hot_sector_min_change_pct=parse_env_float(
+                os.getenv('WOLF_DAILY_HOT_SECTOR_MIN_CHANGE_PCT'),
+                0.0,
+                field_name='WOLF_DAILY_HOT_SECTOR_MIN_CHANGE_PCT',
+                minimum=-50.0,
+                maximum=200.0,
             ),
             generation_backend=generation_backend,
             generation_fallback_backend=generation_fallback_backend,

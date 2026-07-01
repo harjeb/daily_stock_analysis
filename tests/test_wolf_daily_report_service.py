@@ -5,12 +5,14 @@ import pandas as pd
 
 from src.config import Config
 from src.services.wolf_daily_report_service import (
+    WolfHotSectorSelection,
     WolfDailyPick,
     WolfDailyReportResult,
     WolfDailyReportService,
     format_wolf_daily_report_markdown,
     load_wolf_codes,
     normalize_wolf_code_list,
+    select_wolf_scope_codes,
 )
 
 
@@ -53,16 +55,59 @@ def test_build_policy_context_adds_daily_k_indicators():
     assert context["today"]["prior_red_low"] > 0
 
 
+def test_select_whitelist_keeps_all_hot_sector_matches_beyond_max():
+    codes = [f"600{i:03d}" for i in range(150)]
+    hot_codes = codes[:60]
+    selection = WolfHotSectorSelection(
+        board_names=["机器人", "半导体"],
+        code_to_boards={code: ["机器人"] for code in hot_codes},
+    )
+
+    selected, warnings = select_wolf_scope_codes(
+        codes,
+        scope="whitelist",
+        max_codes=30,
+        hot_sector_selection=selection,
+    )
+
+    assert selected == hot_codes
+    assert len(selected) == 60
+    assert any("selected 60 of 150" in warning for warning in warnings)
+
+
+def test_select_stock_list_keeps_hot_matches_then_fills_to_fallback_cap():
+    codes = [f"600{i:03d}" for i in range(80)]
+    hot_codes = codes[:40]
+    selection = WolfHotSectorSelection(
+        board_names=["机器人"],
+        code_to_boards={code: ["机器人"] for code in hot_codes},
+    )
+
+    selected, warnings = select_wolf_scope_codes(
+        codes,
+        scope="stock_list",
+        max_codes=30,
+        hot_sector_selection=selection,
+    )
+
+    assert selected == hot_codes
+    assert len(selected) == 40
+    assert any("kept 40 hot-sector matches" in warning for warning in warnings)
+
+
 def test_format_wolf_daily_report_markdown_groups_scopes():
     result = WolfDailyReportResult(
         enabled=True,
         whitelist_count=1,
         stock_list_count=1,
+        hot_sector_count=1,
+        hot_sector_names=["机器人"],
         picks=[
             WolfDailyPick(
                 code="600519",
                 scope="whitelist",
                 name="贵州茅台",
+                hot_sectors=["机器人"],
                 policy={
                     "wolf_action": "probe",
                     "position_cap": "10%",
@@ -91,3 +136,5 @@ def test_format_wolf_daily_report_markdown_groups_scopes():
     assert "白名单观察 / 入场候选" in markdown
     assert "STOCK_LIST 操作分析" in markdown
     assert "贵州茅台(600519)" in markdown
+    assert "近60日强势板块" in markdown
+    assert "板块：机器人" in markdown
