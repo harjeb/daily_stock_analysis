@@ -326,13 +326,22 @@ def format_wolf_daily_report_markdown(result: WolfDailyReportResult) -> str:
 
     whitelist = [pick for pick in result.picks if pick.scope == "whitelist"]
     stock_list = [pick for pick in result.picks if pick.scope == "stock_list"]
+    sorted_whitelist = _sort_picks(whitelist)
+    sorted_stock_list = _sort_picks(stock_list)
+    notes = list(dict.fromkeys([*result.warnings, *result.source_errors]))
     lines = [
         "# 🐺 狼哥日K盘后分析",
         "",
         f"> 白名单 {result.whitelist_count} 只 | STOCK_LIST {result.stock_list_count} 只 | 已评估 {len(result.picks)} 只",
+        "> 怎么读：先看“动作”和“下一步”。Wolf 报告是日K盘后计划，不是盘中即时买卖指令。",
         "> 数据边界：本报告只使用日 K、均线、BOLL、量价和已有大盘摘要；不使用 15 分钟 K，不生成盘中即时买卖指令。",
         "",
     ]
+    if result.whitelist_count == 0 and any("whitelist file not found" in note.lower() for note in notes):
+        lines.extend([
+            "> 白名单未分析：未找到白名单文件，也没有注入白名单内容。若要分析白名单，请配置 `WOLF_DAILY_WHITELIST_CONTENT` 或提交 `WOLF_DAILY_WHITELIST_FILE` 指向的文件。",
+            "",
+        ])
     if result.hot_sector_names:
         sector_text = "、".join(result.hot_sector_names[:8])
         suffix = "…" if len(result.hot_sector_names) > 8 else ""
@@ -341,26 +350,40 @@ def format_wolf_daily_report_markdown(result: WolfDailyReportResult) -> str:
             "",
         ])
 
+    if result.picks:
+        lines.extend(["## 快速结论", ""])
+        lines.append("| 范围 | 股票 | 动作 | 位置 | 下一步 | 主要风险 |")
+        lines.append("|---|---|---|---|---|---|")
+        for pick in [*sorted_whitelist, *sorted_stock_list]:
+            lines.append(_format_pick_summary_row(pick))
+        lines.append("")
+
+    common_reasons = _common_market_reasons(result.picks)
+    if common_reasons:
+        lines.extend(["## 共同约束", ""])
+        for reason in common_reasons[:3]:
+            lines.append(f"- {_compact_text(reason, 120)}")
+        lines.append("")
+
     if whitelist:
         lines.extend(["## 白名单观察 / 入场候选", ""])
-        for index, pick in enumerate(_sort_picks(whitelist), 1):
+        for index, pick in enumerate(sorted_whitelist, 1):
             lines.extend(_format_pick(index, pick, holding_mode=False))
         lines.append("")
 
     if stock_list:
         lines.extend(["## STOCK_LIST 操作分析", ""])
-        for index, pick in enumerate(_sort_picks(stock_list), 1):
+        for index, pick in enumerate(sorted_stock_list, 1):
             lines.extend(_format_pick(index, pick, holding_mode=True))
         lines.append("")
 
     if not whitelist and not stock_list:
         lines.extend(["本次没有可评估的 A 股标的。", ""])
 
-    notes = list(dict.fromkeys([*result.warnings, *result.source_errors]))
     if notes:
         lines.extend(["## 降级提示", ""])
         for note in notes[:8]:
-            lines.append(f"- {_compact_text(note, 160)}")
+            lines.append(f"- {_compact_text(_humanize_wolf_note(note), 180)}")
         lines.append("")
 
     return "\n".join(lines).strip()
@@ -602,20 +625,121 @@ def _format_pick(index: int, pick: WolfDailyPick, *, holding_mode: bool) -> List
     if metric_text:
         lines.append(f"   - 日K：{metric_text}")
     reasons = [str(item) for item in policy.get("reasons") or [] if str(item).strip()]
-    if reasons:
-        lines.append(f"   - 依据：{_compact_text('；'.join(reasons[:3]), 160)}")
+    stock_reasons = _stock_specific_reasons(reasons)
+    if stock_reasons:
+        lines.append(f"   - 为什么：{_compact_text('；'.join(stock_reasons[:3]), 180)}")
     if pick.hot_sectors:
         lines.append(f"   - 板块：{'、'.join(pick.hot_sectors[:4])}")
     entry_conditions = [str(item) for item in policy.get("entry_conditions") or [] if str(item).strip()]
     if entry_conditions:
-        lines.append(f"   - 触发：{_compact_text('；'.join(entry_conditions[:2]), 140)}")
+        lines.append(f"   - 下一步：{_compact_text('；'.join(entry_conditions[:2]), 150)}")
     invalid_conditions = [str(item) for item in policy.get("invalid_conditions") or [] if str(item).strip()]
     if invalid_conditions:
-        lines.append(f"   - 失效：{_compact_text('；'.join(invalid_conditions[:2]), 140)}")
+        lines.append(f"   - 风险线：{_compact_text('；'.join(invalid_conditions[:2]), 150)}")
     hard_vetoes = [str(item) for item in policy.get("hard_vetoes") or [] if str(item).strip()]
     if hard_vetoes:
         lines.append(f"   - 硬否决：{', '.join(hard_vetoes[:4])}")
     return lines
+
+
+def _format_pick_summary_row(pick: WolfDailyPick) -> str:
+    name_text = f"{pick.name}({pick.code})" if pick.name and pick.name != pick.code else pick.code
+    scope_label = "白名单" if pick.scope == "whitelist" else "自选股"
+    holding_mode = pick.scope == "stock_list"
+    action_label = _holding_action_label(pick.action) if holding_mode else _entry_action_label(pick.action)
+    metrics = pick.policy.get("metrics") if isinstance(pick.policy.get("metrics"), Mapping) else {}
+    return (
+        f"| {scope_label} | {_escape_table_cell(name_text)} | {_escape_table_cell(action_label)} "
+        f"| {_escape_table_cell(_position_summary(metrics))} "
+        f"| {_escape_table_cell(_next_step_summary(pick))} "
+        f"| {_escape_table_cell(_risk_summary(pick))} |"
+    )
+
+
+def _position_summary(metrics: Mapping[str, Any]) -> str:
+    close = _safe_float(metrics.get("close"))
+    ma5 = _safe_float(metrics.get("ma5"))
+    ma10 = _safe_float(metrics.get("ma10"))
+    ma20 = _safe_float(metrics.get("ma20"))
+    bias_ma5 = _safe_float(metrics.get("bias_ma5"))
+    if close is None:
+        return "价格数据不足"
+    if ma20 is not None and close < ma20:
+        return "跌破MA20"
+    if bias_ma5 is not None and bias_ma5 > 5:
+        return "离MA5过远"
+    if ma5 is not None and abs(_calculate_bias(close, ma5) or 0) <= 2:
+        return "贴近MA5"
+    if ma10 is not None and close < ma10:
+        return "低于MA10"
+    if ma5 is not None and ma10 is not None and ma20 is not None and ma5 > ma10 > ma20:
+        return "多头排列"
+    return "结构待确认"
+
+
+def _next_step_summary(pick: WolfDailyPick) -> str:
+    policy = pick.policy
+    entry_conditions = [str(item) for item in policy.get("entry_conditions") or [] if str(item).strip()]
+    if entry_conditions:
+        return _compact_text(entry_conditions[0], 46)
+    action = pick.action
+    if action in {"enter", "probe"}:
+        return "只按回踩计划执行"
+    if action in {"no_entry", "reduce", "exit"}:
+        return "不加仓，先处理风险"
+    return "等站回关键均线"
+
+
+def _risk_summary(pick: WolfDailyPick) -> str:
+    policy = pick.policy
+    hard_vetoes = [str(item) for item in policy.get("hard_vetoes") or [] if str(item).strip()]
+    if hard_vetoes:
+        return _hard_veto_label(hard_vetoes[0])
+    invalid_conditions = [str(item) for item in policy.get("invalid_conditions") or [] if str(item).strip()]
+    if invalid_conditions:
+        return _compact_text(invalid_conditions[0], 48)
+    return "无明确硬否决"
+
+
+def _hard_veto_label(value: str) -> str:
+    return {
+        "market_gate_block": "大盘阻断",
+        "high_bias_no_chase": "MA5乖离过大",
+        "boll_overstretch_no_chase": "偏离BOLL上轨",
+        "high_volume_prior_red_break": "放量破红K低点",
+        "black_k_break_ma5_reduce": "黑K放量破MA5",
+        "below_ma20": "跌破MA20",
+        "volume_overheated": "量能过热",
+    }.get(value, value)
+
+
+def _stock_specific_reasons(reasons: List[str]) -> List[str]:
+    common_prefixes = ("大盘摘要", "大盘环境", "缺少大盘")
+    return [reason for reason in reasons if not reason.startswith(common_prefixes)]
+
+
+def _common_market_reasons(picks: List[WolfDailyPick]) -> List[str]:
+    common: List[str] = []
+    for pick in picks:
+        reasons = [str(item) for item in pick.policy.get("reasons") or [] if str(item).strip()]
+        for reason in reasons:
+            if reason.startswith(("大盘摘要", "大盘环境", "缺少大盘")) and reason not in common:
+                common.append(reason)
+    return common
+
+
+def _humanize_wolf_note(note: str) -> str:
+    text = str(note or "").strip()
+    if text.startswith("Wolf whitelist file not found:"):
+        path = text.split(":", 1)[1].strip()
+        return f"白名单文件不存在：{path}。如果不想提交文件，请在 GitHub Variables/Secrets 配置 WOLF_DAILY_WHITELIST_CONTENT 或 WOLF_DAILY_WHITELIST_CONTENT_B64。"
+    if text == "wolf_hot_sector_performance_empty":
+        return "近60日强势板块数据为空，本次无法按强势板块筛白名单。"
+    return text
+
+
+def _escape_table_cell(value: Any) -> str:
+    return str(value or "").replace("|", "\\|").replace("\n", " ")
 
 
 def _entry_action_label(action: str) -> str:

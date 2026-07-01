@@ -133,8 +133,11 @@ def test_format_wolf_daily_report_markdown_groups_scopes():
     markdown = format_wolf_daily_report_markdown(result)
 
     assert "狼哥日K盘后分析" in markdown
+    assert "怎么读" in markdown
+    assert "快速结论" in markdown
     assert "白名单观察 / 入场候选" in markdown
     assert "STOCK_LIST 操作分析" in markdown
     assert "贵州茅台(600519)" in markdown
     assert "近60日强势板块" in markdown
     assert "板块：机器人" in markdown
+    assert "下一步" in markdown

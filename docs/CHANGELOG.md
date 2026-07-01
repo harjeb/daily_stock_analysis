@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [改进] GitHub Actions 每日分析支持透传 Wolf 日 K 盘后分析配置与白名单内容。
 - [改进] Wolf 日 K 报告按近 60 日板块涨幅筛选白名单候选，强势板块命中项不再受默认 30 只兜底上限截断。
 - [改进] 合并日报中优先展示个股决策仪表盘，再追加 AlphaSift 与 Wolf 附加报告，降低通知截断时漏看主分析的概率。
+- [改进] Wolf 日 K 报告新增快速结论表、共同约束和白名单缺失说明，减少个股条目重复且更容易扫读。
 
 ## [3.24.1] - 2026-06-28
 

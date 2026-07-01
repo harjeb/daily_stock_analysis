@@ -29,6 +29,8 @@ GitHub Actions 每日分析 workflow 会读取同名 Repository Variables 或 Se
 
 强势板块默认取近 60 日涨幅前 12 个，且涨幅不低于 0%。可以用 `WOLF_DAILY_HOT_SECTOR_TOP_N=0` 表示不限制板块个数，只按 `WOLF_DAILY_HOT_SECTOR_MIN_CHANGE_PCT` 过滤。
 
+如果报告显示“白名单 0 只”，通常表示 `WOLF_DAILY_WHITELIST_ENABLED=true` 但没有可读取的白名单：`WOLF_DAILY_WHITELIST_FILE` 指向的文件不存在，且没有配置 `WOLF_DAILY_WHITELIST_CONTENT` / `WOLF_DAILY_WHITELIST_CONTENT_B64`。
+
 ## 报告范围
 
 - 白名单：输出“观察 / 可试探 / 可入场”候选，适合维护一个更大的观察池。
