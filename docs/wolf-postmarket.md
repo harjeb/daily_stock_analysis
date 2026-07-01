@@ -20,6 +20,8 @@ WOLF_DAILY_WHITELIST_CONTENT=600519,300750,002594
 WOLF_DAILY_WHITELIST_CONTENT_B64=
 ```
 
+GitHub Actions 每日分析 workflow 会读取同名 Repository Variables 或 Secrets。普通开关和数量上限建议放在 Variables；只有不想提交到仓库的白名单内容才需要放到 `WOLF_DAILY_WHITELIST_CONTENT` 或 `WOLF_DAILY_WHITELIST_CONTENT_B64`。
+
 ## 报告范围
 
 - 白名单：输出“观察 / 可试探 / 可入场”候选，适合维护一个更大的观察池。

@@ -407,6 +407,16 @@ jobs:
           ALPHASIFT_DAILY_USE_LLM: ${{ vars.ALPHASIFT_DAILY_USE_LLM || secrets.ALPHASIFT_DAILY_USE_LLM || 'true' }}
           ALPHASIFT_DAILY_POOL_CONTENT: ${{ vars.ALPHASIFT_DAILY_POOL_CONTENT || secrets.ALPHASIFT_DAILY_POOL_CONTENT }}
           ALPHASIFT_DAILY_POOL_CONTENT_B64: ${{ vars.ALPHASIFT_DAILY_POOL_CONTENT_B64 || secrets.ALPHASIFT_DAILY_POOL_CONTENT_B64 }}
+
+          # Wolf 日K盘后分析（蒸馏规则，不读取原始回帖）
+          WOLF_DAILY_REPORT_ENABLED: ${{ vars.WOLF_DAILY_REPORT_ENABLED || secrets.WOLF_DAILY_REPORT_ENABLED || 'false' }}
+          WOLF_DAILY_STOCK_LIST_ENABLED: ${{ vars.WOLF_DAILY_STOCK_LIST_ENABLED || secrets.WOLF_DAILY_STOCK_LIST_ENABLED || 'true' }}
+          WOLF_DAILY_WHITELIST_ENABLED: ${{ vars.WOLF_DAILY_WHITELIST_ENABLED || secrets.WOLF_DAILY_WHITELIST_ENABLED || 'false' }}
+          WOLF_DAILY_WHITELIST_FILE: ${{ vars.WOLF_DAILY_WHITELIST_FILE || secrets.WOLF_DAILY_WHITELIST_FILE || 'data/pools/wolf_whitelist.csv' }}
+          WOLF_DAILY_MAX_CODES: ${{ vars.WOLF_DAILY_MAX_CODES || secrets.WOLF_DAILY_MAX_CODES || '30' }}
+          WOLF_DAILY_HISTORY_DAYS: ${{ vars.WOLF_DAILY_HISTORY_DAYS || secrets.WOLF_DAILY_HISTORY_DAYS || '120' }}
+          WOLF_DAILY_WHITELIST_CONTENT: ${{ vars.WOLF_DAILY_WHITELIST_CONTENT || secrets.WOLF_DAILY_WHITELIST_CONTENT }}
+          WOLF_DAILY_WHITELIST_CONTENT_B64: ${{ vars.WOLF_DAILY_WHITELIST_CONTENT_B64 || secrets.WOLF_DAILY_WHITELIST_CONTENT_B64 }}
           
         run: |
           # 解析自选股配置：
@@ -429,6 +439,18 @@ jobs:
             mkdir -p "$(dirname "$ALPHASIFT_DAILY_POOL_FILE")"
             printf '%s\n' "$ALPHASIFT_DAILY_POOL_CONTENT" > "$ALPHASIFT_DAILY_POOL_FILE"
             echo "✅ AlphaSift 股票池文件已从配置写入: $ALPHASIFT_DAILY_POOL_FILE"
+          fi
+
+          # 可选：从 GitHub Variables/Secrets 写出 Wolf 白名单文件。
+          # 若仓库已提交 WOLF_DAILY_WHITELIST_FILE 指向的文件，则不需要配置这两个变量。
+          if [ -n "${WOLF_DAILY_WHITELIST_CONTENT_B64:-}" ]; then
+            mkdir -p "$(dirname "$WOLF_DAILY_WHITELIST_FILE")"
+            printf '%s' "$WOLF_DAILY_WHITELIST_CONTENT_B64" | base64 -d > "$WOLF_DAILY_WHITELIST_FILE"
+            echo "✅ Wolf 白名单文件已从 B64 配置写入: $WOLF_DAILY_WHITELIST_FILE"
+          elif [ -n "${WOLF_DAILY_WHITELIST_CONTENT:-}" ]; then
+            mkdir -p "$(dirname "$WOLF_DAILY_WHITELIST_FILE")"
+            printf '%s\n' "$WOLF_DAILY_WHITELIST_CONTENT" > "$WOLF_DAILY_WHITELIST_FILE"
+            echo "✅ Wolf 白名单文件已从配置写入: $WOLF_DAILY_WHITELIST_FILE"
           fi
 
           # 处理 LITELLM YAML 配置文件
@@ -483,6 +505,11 @@ jobs:
             echo "  AlphaSift Daily Strategies: ${ALPHASIFT_DAILY_STRATEGIES:-$ALPHASIFT_DAILY_STRATEGY}"
           else
             echo "  AlphaSift Daily Pool: ⚪ 未启用"
+          fi
+          echo "  Wolf 日K盘后分析: $([ "${WOLF_DAILY_REPORT_ENABLED,,}" = "true" ] && echo '✅ 已启用' || echo '⚪ 未启用')"
+          if [ "${WOLF_DAILY_REPORT_ENABLED,,}" = "true" ]; then
+            echo "  Wolf STOCK_LIST: $([ "${WOLF_DAILY_STOCK_LIST_ENABLED,,}" = "true" ] && echo '✅ 分析' || echo '⚪ 跳过')"
+            echo "  Wolf 白名单: $([ "${WOLF_DAILY_WHITELIST_ENABLED,,}" = "true" ] && echo "✅ $WOLF_DAILY_WHITELIST_FILE" || echo '⚪ 未启用')"
           fi
           echo ""
           echo "【搜索引擎】"
