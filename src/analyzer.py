@@ -2172,6 +2172,7 @@ class GeminiAnalyzer:
         Args:
             api_key: Ignored (kept for backward compatibility). Keys are loaded from config.
         """
+        self.config = config
         self._config_override = config
         self._requested_skills = list(skills) if skills is not None else None
         self._skill_instructions_override = skill_instructions
@@ -3568,8 +3569,9 @@ class GeminiAnalyzer:
             prompt += daily_market_context_section
         if isinstance(analysis_context_pack_summary, str) and analysis_context_pack_summary:
             prompt += analysis_context_pack_summary
-        wolf_policy_enabled = bool(getattr(self.config, "wolf_daily_report_enabled", False)) or (
-            "wolf_postmarket" in set(getattr(self.config, "agent_skills", []) or [])
+        runtime_config = self._get_runtime_config()
+        wolf_policy_enabled = bool(getattr(runtime_config, "wolf_daily_report_enabled", False)) or (
+            "wolf_postmarket" in set(getattr(runtime_config, "agent_skills", []) or [])
         )
         if wolf_policy_enabled:
             wolf_policy_section = format_wolf_policy_prompt_section(
