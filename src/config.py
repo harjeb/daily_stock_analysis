@@ -750,6 +750,16 @@ class Config:
     alphasift_daily_notify: bool = False
     alphasift_daily_use_llm: bool = True
 
+    # === Wolf daily-K post-market report ===
+    wolf_daily_report_enabled: bool = False
+    wolf_daily_whitelist_enabled: bool = False
+    wolf_daily_stock_list_enabled: bool = True
+    wolf_daily_whitelist_file: str = "data/pools/wolf_whitelist.csv"
+    wolf_daily_whitelist_content: str = ""
+    wolf_daily_whitelist_content_b64: str = ""
+    wolf_daily_max_codes: int = 30
+    wolf_daily_history_days: int = 120
+
     # === AI 分析配置 ===
     generation_backend: str = LITELLM_BACKEND_ID
     generation_fallback_backend: str = LITELLM_BACKEND_ID
@@ -1637,6 +1647,38 @@ class Config:
             stock_index_remote_update_enabled=parse_env_bool(
                 os.getenv('STOCK_INDEX_REMOTE_UPDATE_ENABLED'),
                 default=True,
+            ),
+            wolf_daily_report_enabled=parse_env_bool(
+                os.getenv('WOLF_DAILY_REPORT_ENABLED'),
+                default=False,
+            ),
+            wolf_daily_whitelist_enabled=parse_env_bool(
+                os.getenv('WOLF_DAILY_WHITELIST_ENABLED'),
+                default=False,
+            ),
+            wolf_daily_stock_list_enabled=parse_env_bool(
+                os.getenv('WOLF_DAILY_STOCK_LIST_ENABLED'),
+                default=True,
+            ),
+            wolf_daily_whitelist_file=os.getenv(
+                'WOLF_DAILY_WHITELIST_FILE',
+                'data/pools/wolf_whitelist.csv',
+            ),
+            wolf_daily_whitelist_content=os.getenv('WOLF_DAILY_WHITELIST_CONTENT', ''),
+            wolf_daily_whitelist_content_b64=os.getenv('WOLF_DAILY_WHITELIST_CONTENT_B64', ''),
+            wolf_daily_max_codes=parse_env_int(
+                os.getenv('WOLF_DAILY_MAX_CODES'),
+                30,
+                field_name='WOLF_DAILY_MAX_CODES',
+                minimum=1,
+                maximum=200,
+            ),
+            wolf_daily_history_days=parse_env_int(
+                os.getenv('WOLF_DAILY_HISTORY_DAYS'),
+                120,
+                field_name='WOLF_DAILY_HISTORY_DAYS',
+                minimum=30,
+                maximum=500,
             ),
             generation_backend=generation_backend,
             generation_fallback_backend=generation_fallback_backend,

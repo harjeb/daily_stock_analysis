@@ -730,6 +730,7 @@ def run_full_analysis(
         market_context_full_report = ""
         market_context_generated_during_stock = False
         alphasift_daily_pool_report = ""
+        wolf_daily_report = ""
         pipeline = StockAnalysisPipeline(
             config=config,
             max_workers=args.workers,
@@ -836,6 +837,60 @@ def run_full_analysis(
             )
             market_context_generated_during_stock = bool(market_context_summary)
 
+        if (
+            not args.dry_run
+            and getattr(config, "wolf_daily_report_enabled", False)
+        ):
+            try:
+                from src.services.wolf_daily_report_service import (
+                    WolfDailyReportService,
+                    format_wolf_daily_report_markdown,
+                )
+
+                wolf_market_context = {
+                    "summary": market_context_summary or "",
+                    "risk_tags": [],
+                    "source": "daily_market_context_summary" if market_context_summary else "unavailable",
+                }
+                wolf_result = WolfDailyReportService(
+                    config,
+                    daily_market_context=wolf_market_context,
+                ).run(stock_codes=stock_codes)
+                wolf_daily_report = format_wolf_daily_report_markdown(wolf_result)
+                if wolf_daily_report:
+                    logger.info(
+                        "狼哥日K盘后分析完成: whitelist=%s stock_list=%s evaluated=%s",
+                        wolf_result.whitelist_count,
+                        wolf_result.stock_list_count,
+                        len(wolf_result.picks),
+                    )
+                    try:
+                        wolf_report_name = (
+                            f"wolf_daily_report_{datetime.now(timezone(timedelta(hours=8))).strftime('%Y%m%d')}.md"
+                        )
+                        wolf_report_path = pipeline.notifier.save_report_to_file(
+                            wolf_daily_report,
+                            filename=wolf_report_name,
+                        )
+                        logger.info("狼哥日K盘后分析已保存: %s", wolf_report_path)
+                    except Exception as save_exc:
+                        logger.warning("狼哥日K盘后分析保存失败（已忽略）: %s", save_exc)
+                    if (
+                        not merge_notification
+                        and not args.no_notify
+                        and pipeline.notifier.is_available()
+                    ):
+                        if pipeline.notifier.send(
+                            wolf_daily_report,
+                            email_send_to_all=True,
+                            route_type="report",
+                        ):
+                            logger.info("狼哥日K盘后分析推送成功")
+                        else:
+                            logger.warning("狼哥日K盘后分析推送失败")
+            except Exception as exc:
+                logger.warning("狼哥日K盘后分析失败（已忽略）: %s", exc)
+
         # Issue #128: 分析间隔 - 在个股分析和大盘分析之间添加延迟
         analysis_delay = getattr(config, 'analysis_delay', 0)
 
@@ -934,12 +989,18 @@ def run_full_analysis(
                 market_report = market_context_full_report or market_context_summary
 
         # Issue #190: 合并推送（个股+大盘复盘）
-        if merge_notification and (results or market_report or alphasift_daily_pool_report) and not args.no_notify:
+        if (
+            merge_notification
+            and (results or market_report or alphasift_daily_pool_report or wolf_daily_report)
+            and not args.no_notify
+        ):
             parts = []
             if market_report:
                 parts.append(f"# 📈 大盘复盘\n\n{market_report}")
             if alphasift_daily_pool_report:
                 parts.append(alphasift_daily_pool_report)
+            if wolf_daily_report:
+                parts.append(wolf_daily_report)
             if results:
                 dashboard_content = pipeline.notifier.generate_aggregate_report(
                     results,
@@ -971,7 +1032,7 @@ def run_full_analysis(
             from src.feishu_doc import FeishuDocManager
 
             feishu_doc = FeishuDocManager()
-            if feishu_doc.is_configured() and (results or market_report or alphasift_daily_pool_report):
+            if feishu_doc.is_configured() and (results or market_report or alphasift_daily_pool_report or wolf_daily_report):
                 logger.info("正在创建飞书云文档...")
 
                 # 1. 准备标题 "01-01 13:01大盘复盘"
@@ -988,6 +1049,9 @@ def run_full_analysis(
 
                 if alphasift_daily_pool_report:
                     full_content += f"{alphasift_daily_pool_report}\n\n---\n\n"
+
+                if wolf_daily_report:
+                    full_content += f"{wolf_daily_report}\n\n---\n\n"
 
                 # 添加个股决策仪表盘（使用 NotificationService 生成，按 report_type 分支）
                 if results:

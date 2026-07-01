@@ -96,6 +96,10 @@ from src.schemas.decision_action import build_action_fields
 from src.schemas.report_schema import AnalysisReportSchema
 from src.market_context import detect_market, get_market_role, get_market_guidelines
 from src.services.daily_market_context import format_daily_market_context_prompt_section
+from src.services.wolf_decision_policy import (
+    evaluate_wolf_postmarket_policy,
+    format_wolf_policy_prompt_section,
+)
 from src.market_phase_prompt import format_market_phase_prompt_section
 
 logger = logging.getLogger(__name__)
@@ -3564,6 +3568,16 @@ class GeminiAnalyzer:
             prompt += daily_market_context_section
         if isinstance(analysis_context_pack_summary, str) and analysis_context_pack_summary:
             prompt += analysis_context_pack_summary
+        wolf_policy_enabled = bool(getattr(self.config, "wolf_daily_report_enabled", False)) or (
+            "wolf_postmarket" in set(getattr(self.config, "agent_skills", []) or [])
+        )
+        if wolf_policy_enabled:
+            wolf_policy_section = format_wolf_policy_prompt_section(
+                evaluate_wolf_postmarket_policy(context),
+                report_language=report_language,
+            )
+            if wolf_policy_section:
+                prompt += wolf_policy_section
         prompt += f"""
 
 ## 📈 技术面数据
