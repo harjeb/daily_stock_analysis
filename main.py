@@ -997,16 +997,16 @@ def run_full_analysis(
             parts = []
             if market_report:
                 parts.append(f"# 📈 大盘复盘\n\n{market_report}")
-            if alphasift_daily_pool_report:
-                parts.append(alphasift_daily_pool_report)
-            if wolf_daily_report:
-                parts.append(wolf_daily_report)
             if results:
                 dashboard_content = pipeline.notifier.generate_aggregate_report(
                     results,
                     getattr(config, 'report_type', 'simple'),
                 )
                 parts.append(f"# 🚀 个股决策仪表盘\n\n{dashboard_content}")
+            if alphasift_daily_pool_report:
+                parts.append(alphasift_daily_pool_report)
+            if wolf_daily_report:
+                parts.append(wolf_daily_report)
             if parts:
                 combined_content = "\n\n---\n\n".join(parts)
                 if pipeline.notifier.is_available():
@@ -1047,19 +1047,19 @@ def run_full_analysis(
                 if market_report:
                     full_content += f"# 📈 大盘复盘\n\n{market_report}\n\n---\n\n"
 
-                if alphasift_daily_pool_report:
-                    full_content += f"{alphasift_daily_pool_report}\n\n---\n\n"
-
-                if wolf_daily_report:
-                    full_content += f"{wolf_daily_report}\n\n---\n\n"
-
                 # 添加个股决策仪表盘（使用 NotificationService 生成，按 report_type 分支）
                 if results:
                     dashboard_content = pipeline.notifier.generate_aggregate_report(
                         results,
                         getattr(config, 'report_type', 'simple'),
                     )
-                    full_content += f"# 🚀 个股决策仪表盘\n\n{dashboard_content}"
+                    full_content += f"# 🚀 个股决策仪表盘\n\n{dashboard_content}\n\n---\n\n"
+
+                if alphasift_daily_pool_report:
+                    full_content += f"{alphasift_daily_pool_report}\n\n---\n\n"
+
+                if wolf_daily_report:
+                    full_content += f"{wolf_daily_report}\n\n---\n\n"
 
                 # 3. 创建文档
                 doc_url = feishu_doc.create_daily_doc(doc_title, full_content)

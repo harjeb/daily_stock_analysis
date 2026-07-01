@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [新功能] 新增狼大盘后决策策略、确定性入场护栏和日 K 每日报告开关，可分别分析白名单候选与 `STOCK_LIST` 操作计划。
 - [改进] GitHub Actions 每日分析支持透传 Wolf 日 K 盘后分析配置与白名单内容。
 - [改进] Wolf 日 K 报告按近 60 日板块涨幅筛选白名单候选，强势板块命中项不再受默认 30 只兜底上限截断。
+- [改进] 合并日报中优先展示个股决策仪表盘，再追加 AlphaSift 与 Wolf 附加报告，降低通知截断时漏看主分析的概率。
 
 ## [3.24.1] - 2026-06-28
 
