@@ -61,15 +61,23 @@ class WolfHotSectorSelection:
     code_to_boards: Dict[str, List[str]] = field(default_factory=dict)
     source_errors: List[str] = field(default_factory=list)
     lookback_days: int = 60
+    board_trends: Dict[str, float] = field(default_factory=dict)
 
 
 class WolfDailyReportService:
-    """Build a deterministic daily-K Wolf report for whitelist and STOCK_LIST."""
+    """Build a daily-K Wolf report for whitelist and STOCK_LIST.
+
+    Supports two modes:
+    - Deterministic (default): hardcoded guardrails via evaluate_wolf_postmarket_policy
+    - LLM-driven (wolf_daily_use_llm=True): sends data to LLM with wolf rulebook
+    """
 
     def __init__(self, config: Config, *, daily_market_context: Optional[Mapping[str, Any]] = None) -> None:
         self.config = config
         self.daily_market_context = dict(daily_market_context or {})
         self._fetcher_manager = None
+        self._llm_service = None
+        self._market_stats: Optional[Dict[str, Any]] = None
 
     def run(
         self,
@@ -90,6 +98,10 @@ class WolfDailyReportService:
             result.hot_sector_count = len(hot_sector_selection.board_names)
             result.hot_sector_names = list(hot_sector_selection.board_names)
             result.source_errors.extend(hot_sector_selection.source_errors)
+
+        use_llm = bool(getattr(self.config, "wolf_daily_use_llm", False))
+        if use_llm:
+            self._market_stats = self._fetch_market_stats()
 
         if bool(getattr(self.config, "wolf_daily_whitelist_enabled", False)):
             whitelist_codes, whitelist_warnings = load_wolf_codes(
@@ -114,6 +126,7 @@ class WolfDailyReportService:
                     code,
                     scope="whitelist",
                     hot_sectors=(hot_sector_selection.code_to_boards.get(code, []) if hot_sector_selection else []),
+                    board_trends=(hot_sector_selection.board_trends if hot_sector_selection else None),
                 )
                 if pick:
                     result.picks.append(pick)
@@ -137,6 +150,7 @@ class WolfDailyReportService:
                     code,
                     scope="stock_list",
                     hot_sectors=(hot_sector_selection.code_to_boards.get(code, []) if hot_sector_selection else []),
+                    board_trends=(hot_sector_selection.board_trends if hot_sector_selection else None),
                 )
                 if pick:
                     result.picks.append(pick)
@@ -145,7 +159,14 @@ class WolfDailyReportService:
             result.warnings.append("Wolf daily report has no enabled scopes or valid A-share codes")
         return result
 
-    def _evaluate_code(self, code: str, *, scope: str, hot_sectors: Optional[List[str]] = None) -> Optional[WolfDailyPick]:
+    def _evaluate_code(
+        self,
+        code: str,
+        *,
+        scope: str,
+        hot_sectors: Optional[List[str]] = None,
+        board_trends: Optional[Dict[str, float]] = None,
+    ) -> Optional[WolfDailyPick]:
         days = max(30, int(getattr(self.config, "wolf_daily_history_days", 120) or 120))
         hot_sectors = list(hot_sectors or [])
         try:
@@ -187,7 +208,15 @@ class WolfDailyReportService:
             "source": "wolf_daily_report",
         }
         context["market_phase_context"] = {"phase": "postmarket"}
-        policy = evaluate_wolf_postmarket_policy(context)
+
+        # Choose evaluation path: LLM or deterministic
+        use_llm = bool(getattr(self.config, "wolf_daily_use_llm", False))
+        if use_llm:
+            self._enrich_context_for_llm(code, context, hot_sectors=hot_sectors, board_trends=board_trends)
+            policy = self._evaluate_with_llm(code, context, hot_sectors=hot_sectors)
+        else:
+            policy = evaluate_wolf_postmarket_policy(context)
+
         if hot_sectors:
             policy["hot_sector_matches"] = hot_sectors
             reasons = [str(item) for item in policy.get("reasons") or [] if str(item).strip()]
@@ -202,6 +231,152 @@ class WolfDailyReportService:
             source=source,
             hot_sectors=hot_sectors,
             policy=policy,
+        )
+
+    def _evaluate_with_llm(
+        self,
+        code: str,
+        context: Mapping[str, Any],
+        *,
+        hot_sectors: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """Evaluate stock using LLM-driven wolf analysis."""
+        if self._llm_service is None:
+            from src.services.wolf_llm_analysis_service import WolfLLMAnalysisService
+            self._llm_service = WolfLLMAnalysisService(self.config)
+
+        name = self._stock_name(code)
+        return self._llm_service.analyze_stock(
+            code,
+            name,
+            context,
+            daily_market_context=self.daily_market_context,
+            hot_sectors=hot_sectors,
+        )
+
+    def _fetch_market_stats(self) -> Dict[str, Any]:
+        try:
+            manager = self._get_fetcher_manager()
+            stats = manager.get_market_stats(purpose="wolf_llm")
+            if stats and isinstance(stats, dict):
+                return stats
+        except Exception as exc:
+            logger.warning("Wolf LLM: failed to fetch market stats: %s", exc)
+        return {}
+
+    def _enrich_context_for_llm(
+        self,
+        code: str,
+        context: Dict[str, Any],
+        *,
+        hot_sectors: Optional[List[str]] = None,
+        board_trends: Optional[Dict[str, float]] = None,
+    ) -> None:
+        """Enrich context with supplementary data for LLM analysis."""
+        breadth: Dict[str, Any] = {}
+        if self._market_stats:
+            breadth = {
+                key: val for key, val in self._market_stats.items()
+                if key in ("up_count", "down_count", "flat_count",
+                           "limit_up_count", "limit_down_count", "total_amount")
+                and val is not None
+            }
+        context["breadth"] = breadth
+
+        sector_info: Dict[str, Any] = {}
+        if hot_sectors and board_trends:
+            sector_info["matched_sectors"] = [
+                {"name": name, "change_60d": board_trends.get(name)}
+                for name in hot_sectors[:5]
+                if name in board_trends
+            ]
+        if board_trends:
+            sorted_trends = sorted(board_trends.items(), key=lambda x: x[1], reverse=True)
+            sector_info["top_sectors_60d"] = [
+                {"name": name, "change_60d": pct}
+                for name, pct in sorted_trends[:5]
+            ]
+        context["sector_trend"] = sector_info
+
+        # Fetch daily sector rankings for mainline判断
+        try:
+            manager = self._get_fetcher_manager()
+            top_sectors, bottom_sectors = manager.get_sector_rankings(5)
+            if top_sectors:
+                sector_info["daily_top_sectors"] = [
+                    {"name": s.get("name", ""), "change_pct": s.get("change_pct")}
+                    for s in top_sectors[:5] if isinstance(s, Mapping)
+                ]
+            if bottom_sectors:
+                sector_info["daily_bottom_sectors"] = [
+                    {"name": s.get("name", ""), "change_pct": s.get("change_pct")}
+                    for s in bottom_sectors[:3] if isinstance(s, Mapping)
+                ]
+        except Exception as exc:
+            logger.debug("Wolf LLM: sector rankings fetch failed: %s", exc)
+
+        try:
+            manager = self._get_fetcher_manager()
+            quote = manager.get_realtime_quote(code, log_final_failure=False)
+            if quote is not None:
+                realtime_extra: Dict[str, Any] = {}
+                for field_name in ("volume_ratio", "turnover_rate", "pe_ratio",
+                                   "pb_ratio", "total_mv", "circ_mv",
+                                   "amplitude", "change_60d", "high_52w", "low_52w"):
+                    val = getattr(quote, field_name, None)
+                    if val is not None:
+                        try:
+                            realtime_extra[field_name] = round(float(val), 4)
+                        except (TypeError, ValueError):
+                            pass
+                context["realtime_extra"] = realtime_extra
+        except Exception as exc:
+            logger.debug("Wolf LLM: realtime quote fetch failed for %s: %s", code, exc)
+
+        # stock_is_core: fetch base_info for industry/ROE/etc
+        stock_profile: Dict[str, Any] = {}
+        try:
+            manager = self._get_fetcher_manager()
+            for fetcher in manager._fetchers:
+                if hasattr(fetcher, "get_base_info"):
+                    info = fetcher.get_base_info(code)
+                    if info and isinstance(info, dict):
+                        for raw_key, canonical in (
+                            ("行业", "industry"), ("所属行业", "industry"),
+                            ("市盈率(动)", "pe_ttm"), ("市净率", "pb"),
+                            ("ROE", "roe"), ("净利率", "net_margin"),
+                            ("总市值", "total_mv"), ("流通市值", "circ_mv"),
+                        ):
+                            val = info.get(raw_key)
+                            if val is not None:
+                                stock_profile[canonical] = val
+                        break
+        except Exception as exc:
+            logger.debug("Wolf LLM: base_info fetch failed for %s: %s", code, exc)
+
+        # belong_board
+        try:
+            manager = self._get_fetcher_manager()
+            for fetcher in manager._fetchers:
+                if hasattr(fetcher, "get_belong_board"):
+                    belong_df = fetcher.get_belong_board(code)
+                    if belong_df is not None and not belong_df.empty:
+                        name_col = "板块名称" if "板块名称" in belong_df.columns else (
+                            "name" if "name" in belong_df.columns else None
+                        )
+                        if name_col:
+                            stock_profile["belong_boards"] = [
+                                str(v) for v in belong_df[name_col].tolist()[:10] if str(v).strip()
+                            ]
+                        break
+        except Exception as exc:
+            logger.debug("Wolf LLM: belong_board fetch failed for %s: %s", code, exc)
+
+        if stock_profile:
+            context["stock_profile"] = stock_profile
+
+        context["user_can_monitor_intraday"] = bool(
+            getattr(self.config, "wolf_user_can_monitor_intraday", False)
         )
 
     def _build_hot_sector_selection(self) -> Optional[WolfHotSectorSelection]:
@@ -244,11 +419,17 @@ class WolfDailyReportService:
                 logger.warning("Wolf hot sector constituent fetch failed for %s: %s", name, exc)
                 source_errors.append(f"wolf_hot_sector_constituents_failed:{name}:{exc}")
 
+        board_trends = {
+            str(board.get("name") or "").strip(): float(board.get("change_60d") or 0.0)
+            for board in ranked_boards
+            if str(board.get("name") or "").strip()
+        }
         return WolfHotSectorSelection(
             board_names=[str(board.get("name") or "").strip() for board in ranked_boards if str(board.get("name") or "").strip()],
             code_to_boards=code_to_boards,
             source_errors=source_errors,
             lookback_days=60,
+            board_trends=board_trends,
         )
 
     def _build_policy_context(self, df: pd.DataFrame) -> Dict[str, Any]:
@@ -285,6 +466,8 @@ class WolfDailyReportService:
         if previous_red_low is not None:
             current["prior_red_low"] = previous_red_low
 
+        entry_zone = self._compute_entry_zone(frame)
+
         return {
             "today": _drop_nan(current),
             "trend_analysis": {
@@ -302,6 +485,7 @@ class WolfDailyReportService:
             "realtime": {
                 "volume_ratio": _safe_float(current.get("volume_ratio")),
             },
+            "planned_entry_zone": entry_zone,
         }
 
     def _stock_name(self, code: str) -> str:
@@ -311,6 +495,67 @@ class WolfDailyReportService:
             return str(name or "").strip()
         except Exception:
             return ""
+
+    @staticmethod
+    def _compute_entry_zone(frame: pd.DataFrame) -> Dict[str, Any]:
+        """Compute candidate support/resistance levels from daily K-line."""
+        if frame.empty:
+            return {}
+
+        close = _safe_float(frame.iloc[-1].get("close"))
+        if close is None:
+            return {}
+
+        supports: List[Dict[str, Any]] = []
+        resistances: List[Dict[str, Any]] = []
+
+        for label, key in (("MA5", "ma5"), ("MA10", "ma10"), ("MA20", "ma20"), ("MA60", "ma60")):
+            val = _safe_float(frame.iloc[-1].get(key))
+            if val is not None and val > 0:
+                entry = {"level": label, "price": round(val, 4), "distance_pct": round((close - val) / val * 100, 2)}
+                if val < close:
+                    supports.append(entry)
+                elif val > close:
+                    resistances.append(entry)
+
+        boll_lower = _safe_float(frame.iloc[-1].get("boll_lower"))
+        boll_mid = _safe_float(frame.iloc[-1].get("boll_mid"))
+        boll_upper = _safe_float(frame.iloc[-1].get("boll_upper"))
+        if boll_lower is not None and boll_lower > 0 and boll_lower < close:
+            supports.append({"level": "BOLL下轨", "price": round(boll_lower, 4), "distance_pct": round((close - boll_lower) / boll_lower * 100, 2)})
+        if boll_mid is not None and boll_mid > 0:
+            if boll_mid < close:
+                supports.append({"level": "BOLL中轨", "price": round(boll_mid, 4), "distance_pct": round((close - boll_mid) / boll_mid * 100, 2)})
+            elif boll_mid > close:
+                resistances.append({"level": "BOLL中轨", "price": round(boll_mid, 4), "distance_pct": round((close - boll_mid) / boll_mid * 100, 2)})
+        if boll_upper is not None and boll_upper > 0 and boll_upper > close:
+            resistances.append({"level": "BOLL上轨", "price": round(boll_upper, 4), "distance_pct": round((close - boll_upper) / boll_upper * 100, 2)})
+
+        recent = frame.tail(20)
+        if "low" in recent.columns:
+            recent_low = _safe_float(recent["low"].min())
+            if recent_low is not None and recent_low > 0 and recent_low < close:
+                supports.append({"level": "近20日低点", "price": round(recent_low, 4), "distance_pct": round((close - recent_low) / recent_low * 100, 2)})
+        if "high" in recent.columns:
+            recent_high = _safe_float(recent["high"].max())
+            if recent_high is not None and recent_high > 0 and recent_high > close:
+                resistances.append({"level": "近20日高点", "price": round(recent_high, 4), "distance_pct": round((close - recent_high) / recent_high * 100, 2)})
+
+        prior_red = _safe_float(_previous_red_low(frame.iloc[:-1]))
+        if prior_red is not None and prior_red > 0:
+            if prior_red < close:
+                supports.append({"level": "前红K低点", "price": round(prior_red, 4), "distance_pct": round((close - prior_red) / prior_red * 100, 2)})
+            elif prior_red > close:
+                resistances.append({"level": "前红K低点", "price": round(prior_red, 4), "distance_pct": round((close - prior_red) / prior_red * 100, 2)})
+
+        supports.sort(key=lambda x: x["distance_pct"], reverse=True)
+        resistances.sort(key=lambda x: x["distance_pct"])
+
+        return {
+            "supports": supports[:5],
+            "resistances": resistances[:5],
+            "current_close": close,
+        }
 
     def _get_fetcher_manager(self):
         if self._fetcher_manager is None:
@@ -639,6 +884,29 @@ def _format_pick(index: int, pick: WolfDailyPick, *, holding_mode: bool) -> List
     hard_vetoes = [str(item) for item in policy.get("hard_vetoes") or [] if str(item).strip()]
     if hard_vetoes:
         lines.append(f"   - 硬否决：{', '.join(hard_vetoes[:4])}")
+    alignment = str(policy.get("market_sector_stock_alignment") or "").strip()
+    if alignment and alignment != "unknown":
+        alignment_label = {
+            "aligned": "大盘/板块/个股对齐",
+            "mixed": "大盘/板块/个股部分冲突",
+            "conflict": "大盘/板块/个股冲突",
+        }.get(alignment, alignment)
+        lines.append(f"   - 对齐：{alignment_label}")
+    next_day_paths = [str(item) for item in policy.get("next_day_paths") or [] if str(item).strip()]
+    if next_day_paths:
+        for path in next_day_paths[:3]:
+            lines.append(f"   - 路径：{_compact_text(path, 150)}")
+    stop_ref = str(policy.get("stop_reference_type") or "").strip()
+    if stop_ref and stop_ref != "none":
+        stop_label = {
+            "stock_close": "突破日收盘价",
+            "sector_index": "板块指数",
+            "ma5": "MA5",
+            "ma20": "MA20",
+            "ma60": "MA60",
+            "prior_red_candle": "前红K低点",
+        }.get(stop_ref, stop_ref)
+        lines.append(f"   - 止损参考：{stop_label}")
     return lines
 
 

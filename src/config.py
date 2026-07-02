@@ -762,6 +762,10 @@ class Config:
     wolf_daily_hot_sector_filter_enabled: bool = True
     wolf_daily_hot_sector_top_n: int = 12
     wolf_daily_hot_sector_min_change_pct: float = 0.0
+    wolf_daily_use_llm: bool = False
+    wolf_llm_max_tokens: int = 2048
+    wolf_llm_temperature: float = 0.3
+    wolf_user_can_monitor_intraday: bool = False
 
     # === AI 分析配置 ===
     generation_backend: str = LITELLM_BACKEND_ID
@@ -1700,6 +1704,28 @@ class Config:
                 field_name='WOLF_DAILY_HOT_SECTOR_MIN_CHANGE_PCT',
                 minimum=-50.0,
                 maximum=200.0,
+            ),
+            wolf_daily_use_llm=parse_env_bool(
+                os.getenv('WOLF_DAILY_USE_LLM'),
+                default=False,
+            ),
+            wolf_llm_max_tokens=parse_env_int(
+                os.getenv('WOLF_LLM_MAX_TOKENS'),
+                2048,
+                field_name='WOLF_LLM_MAX_TOKENS',
+                minimum=512,
+                maximum=8192,
+            ),
+            wolf_llm_temperature=parse_env_float(
+                os.getenv('WOLF_LLM_TEMPERATURE'),
+                0.3,
+                field_name='WOLF_LLM_TEMPERATURE',
+                minimum=0.0,
+                maximum=2.0,
+            ),
+            wolf_user_can_monitor_intraday=parse_env_bool(
+                os.getenv('WOLF_USER_CAN_MONITOR_INTRADAY'),
+                default=False,
             ),
             generation_backend=generation_backend,
             generation_fallback_backend=generation_fallback_backend,

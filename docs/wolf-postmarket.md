@@ -16,6 +16,29 @@ WOLF_DAILY_HOT_SECTOR_TOP_N=12
 WOLF_DAILY_HOT_SECTOR_MIN_CHANGE_PCT=0
 ```
 
+### LLM 驱动模式
+
+默认使用硬编码确定性护栏。启用 LLM 模式后，每只股票的技术数据会发送给 LLM，由 LLM 根据狼大规则框架做判断并输出结构化决策：
+
+```env
+WOLF_DAILY_USE_LLM=true
+WOLF_LLM_MAX_TOKENS=2048
+WOLF_LLM_TEMPERATURE=0.3
+WOLF_USER_CAN_MONITOR_INTRADAY=false
+```
+
+LLM 模式下，`strategies/wolf_postmarket.yaml` 中的规则指令会作为 system prompt 注入，LLM 输出 JSON 格式的决策结果（`wolf_action`、`entry_type`、`position_cap`、`next_day_paths` 等字段）。如果 LLM 调用失败或返回不可解析的结果，会自动降级为 `watch` 安全默认值。
+
+LLM 模式会额外获取以下数据传入 prompt：
+- **市场广度**：上涨/下跌家数、涨停/跌停家数、两市成交额（通过 `get_market_stats` API）
+- **板块趋势**：命中板块的 60 日涨幅、全市场强势板块前 5（来自热点板块筛选）、当日领涨/领跌板块排名（通过 `get_sector_rankings` API）
+- **个股实时行情**：量比、换手率、市盈率、市净率、总市值、流通市值、振幅、60日涨跌幅、52周高低（通过 `get_realtime_quote` API）
+- **计划入场区间**：候选支撑位（MA5/10/20/60、BOLL 中下轨、近 20 日低点、前红 K 低点）和阻力位（BOLL 上轨、近 20 日高点等），含距离收盘价百分比（从日 K 数据计算）
+- **个股基本面**：所属行业、ROE、净利率、市盈率(动)、市净率、所属板块（通过 `get_base_info` + `get_belong_board` API）
+- **用户盯盘能力**：`WOLF_USER_CAN_MONITOR_INTRADAY=true` 时告知 LLM 用户可以盘中盯盘，影响 `cannot_watch_no_intraday` 规则的判断
+
+LLM 模式与确定性护栏模式可以随时切换，不影响报告格式和推送流程。
+
 可选的 GitHub Actions / 容器注入方式：
 
 ```env

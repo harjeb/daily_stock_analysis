@@ -141,3 +141,67 @@ def test_format_wolf_daily_report_markdown_groups_scopes():
     assert "近60日强势板块" in markdown
     assert "板块：机器人" in markdown
     assert "下一步" in markdown
+
+
+def test_format_wolf_daily_report_markdown_renders_llm_fields():
+    result = WolfDailyReportResult(
+        enabled=True,
+        whitelist_count=1,
+        stock_list_count=0,
+        picks=[
+            WolfDailyPick(
+                code="600519",
+                scope="whitelist",
+                name="贵州茅台",
+                policy={
+                    "wolf_action": "probe",
+                    "position_cap": "10%",
+                    "confidence": "medium",
+                    "reasons": ["多头排列且贴近MA5"],
+                    "entry_conditions": ["次日回踩MA5不破"],
+                    "invalid_conditions": ["跌破MA20"],
+                    "market_sector_stock_alignment": "aligned",
+                    "next_day_paths": ["如果回踩MA5缩量企稳, 则试探入场", "如果放量跌破MA5, 则观望"],
+                    "stop_reference_type": "ma5",
+                },
+            ),
+        ],
+    )
+
+    markdown = format_wolf_daily_report_markdown(result)
+    assert "对齐：大盘/板块/个股对齐" in markdown
+    assert "路径：如果回踩MA5缩量企稳" in markdown
+    assert "止损参考：MA5" in markdown
+
+
+def test_compute_entry_zone_from_daily_kline():
+    df = pd.DataFrame({
+        "date": pd.date_range("2025-01-01", periods=30),
+        "open": [9.0 + i * 0.1 for i in range(30)],
+        "high": [9.2 + i * 0.1 for i in range(30)],
+        "low": [8.8 + i * 0.1 for i in range(30)],
+        "close": [9.0 + i * 0.1 for i in range(30)],
+        "volume": [100000] * 30,
+    })
+    service = WolfDailyReportService(Config())
+    context = service._build_policy_context(df)
+    entry = context.get("planned_entry_zone")
+    assert entry is not None
+    assert "supports" in entry
+    assert "resistances" in entry
+    assert "current_close" in entry
+    assert entry["current_close"] == 11.9
+    # MA10 should be below current close (support)
+    support_levels = [s["level"] for s in entry["supports"]]
+    assert "MA10" in support_levels
+    assert "MA20" in support_levels
+    # BOLL upper should be above current close (resistance)
+    resistance_levels = [r["level"] for r in entry["resistances"]]
+    assert "BOLL上轨" in resistance_levels
+    # Each entry has distance_pct
+    for s in entry["supports"]:
+        assert "distance_pct" in s
+        assert s["distance_pct"] > 0
+    for r in entry["resistances"]:
+        assert "distance_pct" in r
+        assert r["distance_pct"] < 0
